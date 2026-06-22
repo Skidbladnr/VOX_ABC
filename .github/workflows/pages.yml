@@ -1,0 +1,62 @@
+name: Deploy frontend to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --include=optional --registry=https://registry.npmjs.org/
+
+      - name: Build frontend
+        env:
+          # For a project site, set this repository variable to /REPO_NAME/.
+          # Example: /vox-abc/
+          # For a custom domain or <user>.github.io root site, set it to /.
+          VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || '/' }}
+
+          # These must point at the deployed Node backend, not localhost.
+          # Example:
+          #   VITE_BACKEND_HTTP_URL=https://vox-abc-production.up.railway.app
+          #   VITE_BACKEND_WS_URL=wss://vox-abc-production.up.railway.app/ws
+          VITE_BACKEND_HTTP_URL: ${{ vars.VITE_BACKEND_HTTP_URL }}
+          VITE_BACKEND_WS_URL: ${{ vars.VITE_BACKEND_WS_URL }}
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/frontend/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

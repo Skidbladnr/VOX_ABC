@@ -1,0 +1,30 @@
+{
+  "name": "vox-abc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Plain JavaScript POC for Vox / ABC live translation PWA.",
+  "scripts": {
+    "dev:backend": "node --watch apps/backend/server.js",
+    "dev:frontend": "vite --config apps/frontend/vite.config.js",
+    "build": "vite build --config apps/frontend/vite.config.js",
+    "preview": "vite preview --config apps/frontend/vite.config.js",
+    "start": "node apps/backend/server.js",
+    "doctor": "node tools/doctor.js",
+    "load-test": "node tools/load-test-ws.js",
+    "dev:real": "DEMO_ASR=false TRANSLATION_PROVIDER=openai node --watch apps/backend/server.js",
+    "start:real": "DEMO_ASR=false TRANSLATION_PROVIDER=openai node apps/backend/server.js"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "4.3.3",
+    "vite": "5.4.11",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "ws": "^8.18.0",
+    "openai": "^5.0.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20.14.0"
+  }
+}
