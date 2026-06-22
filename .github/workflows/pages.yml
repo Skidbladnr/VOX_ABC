@@ -35,7 +35,7 @@ jobs:
           # For a project site, set this repository variable to /REPO_NAME/.
           # Example: /vox-abc/
           # For a custom domain or <user>.github.io root site, set it to /.
-          VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || '/' }}
+          VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || '/VOX_ABC/' }}
 
           # These must point at the deployed Node backend, not localhost.
           # Example:
