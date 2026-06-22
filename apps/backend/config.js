@@ -8,6 +8,13 @@ const ROOT = path.resolve(__dirname, '../..');
 const originalEnv = new Set(Object.keys(process.env));
 const fileEnvKeys = new Set();
 
+const DEFAULT_OPENAI_MODEL_OPTIONS = [
+  'gpt-5.4-mini',
+  'gpt-5-mini',
+  'gpt-4.1-mini',
+  'gpt-5.2'
+];
+
 function parseEnvLine(line) {
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith('#')) return null;
@@ -34,7 +41,7 @@ function loadEnvFile(relativePath) {
   }
 }
 
-// No dependency needed: `node apps/backend/server.js` now loads local env files automatically.
+// No dependency needed: `node apps/backend/server.js` loads local env files automatically.
 loadEnvFile('.env');
 loadEnvFile('.env.local');
 
@@ -56,6 +63,17 @@ function csvFromEnv(value) {
     .filter(Boolean);
 }
 
+function unique(items) {
+  return Array.from(new Set(items.filter(Boolean)));
+}
+
+const configuredModelOptions = unique([
+  ...csvFromEnv(process.env.OPENAI_MODEL_OPTIONS),
+  process.env.OPENAI_MODEL || '',
+  process.env.OPENAI_FALLBACK_MODEL || '',
+  ...DEFAULT_OPENAI_MODEL_OPTIONS
+]);
+
 export const config = {
   port: intFromEnv(process.env.PORT, 8787),
   host: process.env.HOST || '0.0.0.0',
@@ -67,8 +85,9 @@ export const config = {
   translationTimeoutMs: intFromEnv(process.env.TRANSLATION_TIMEOUT_MS, 5000),
   openai: {
     apiKey: process.env.OPENAI_API_KEY || '',
-    model: process.env.OPENAI_MODEL || 'gpt-5.2',
-    fallbackModel: process.env.OPENAI_FALLBACK_MODEL || 'gpt-5.2'
+    model: process.env.OPENAI_MODEL || configuredModelOptions[0] || 'gpt-5.4-mini',
+    fallbackModel: process.env.OPENAI_FALLBACK_MODEL || configuredModelOptions[1] || 'gpt-5-mini',
+    modelOptions: configuredModelOptions
   }
 };
 
@@ -82,8 +101,46 @@ export function configuredLanguages() {
   return selected.length ? selected : base;
 }
 
+export function hasOpenAIKey() {
+  return Boolean(config.openai.apiKey && !config.openai.apiKey.includes('your-key'));
+}
+
+export function normalizeModelChoice(value) {
+  return String(value || '').trim();
+}
+
+export function modelConfigSnapshot() {
+  return {
+    provider: config.translationProvider,
+    primaryModel: config.openai.model,
+    fallbackModel: config.openai.fallbackModel || '',
+    modelOptions: config.openai.modelOptions,
+    customModelsAllowed: true,
+    timeoutMs: config.translationTimeoutMs
+  };
+}
+
+export function updateOpenAIModelConfig({ primaryModel, fallbackModel }) {
+  const nextPrimary = normalizeModelChoice(primaryModel || config.openai.model);
+  const nextFallback = normalizeModelChoice(fallbackModel ?? config.openai.fallbackModel);
+
+  if (!nextPrimary) {
+    throw new Error('Primary model cannot be empty.');
+  }
+
+  config.openai.model = nextPrimary;
+  config.openai.fallbackModel = nextFallback;
+  config.openai.modelOptions = unique([
+    nextPrimary,
+    nextFallback,
+    ...config.openai.modelOptions
+  ]);
+
+  return modelConfigSnapshot();
+}
+
 export function providerRuntimeStatus() {
-  const apiKeyPresent = Boolean(config.openai.apiKey && !config.openai.apiKey.includes('your-key'));
+  const apiKeyPresent = hasOpenAIKey();
   return {
     requestedProvider: config.translationProvider,
     effectiveProvider: config.translationProvider === 'openai' && apiKeyPresent ? 'openai' : 'mock',
@@ -93,7 +150,8 @@ export function providerRuntimeStatus() {
     openai: {
       apiKeyPresent,
       model: config.openai.model,
-      fallbackModel: config.openai.fallbackModel || null
+      fallbackModel: config.openai.fallbackModel || null,
+      modelOptions: config.openai.modelOptions
     },
     envFilesLoaded: Array.from(fileEnvKeys).length > 0
   };

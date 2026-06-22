@@ -1,6 +1,6 @@
 import { WebSocket } from 'ws';
 import { encodeMessage } from '../../shared/contracts/messages.js';
-import { configuredLanguages, config } from './config.js';
+import { configuredLanguages, config, updateOpenAIModelConfig, modelConfigSnapshot } from './config.js';
 import { PhraseSegmenter } from './segmentation.js';
 import { getCurrentSlide } from './slides.js';
 import { makeProviders } from './providers/index.js';
@@ -203,39 +203,80 @@ export class LiveTranslationEngine {
     }
   }
 
-  async translateOnce({ text, sourceLanguage = 'en-US', targetLanguage = 'ja-JP' }) {
-    const startedAt = now();
-    const providers = [this.providers.primary, this.providers.fallback].filter(Boolean);
-    let lastError = null;
+  getModelConfig() {
+    return modelConfigSnapshot();
+  }
 
-    for (const provider of providers) {
-      let accumulated = '';
-      try {
-        for await (const delta of provider.translate({
-          sourceText: text,
-          sourceLanguage,
-          targetLanguage
-        })) {
-          accumulated += delta;
-        }
-        return {
-          ok: true,
-          text: accumulated || text,
-          provider: provider.name,
-          latencyMs: now() - startedAt,
-          targetLanguage
-        };
-      } catch (error) {
-        lastError = error;
-      }
+  setModelConfig({ primaryModel, fallbackModel }) {
+    const snapshot = updateOpenAIModelConfig({ primaryModel, fallbackModel });
+    this.providers = makeProviders();
+    this.effectiveProvider = this.providers.effectiveProvider || this.providers.primary?.name || 'unknown';
+
+    for (const language of this.languages) {
+      this.broadcast(language.code, this.statusMessage(
+        language.code,
+        'connected',
+        `Translation model switched to ${snapshot.primaryModel}${snapshot.fallbackModel ? ` / fallback ${snapshot.fallbackModel}` : ''}.`
+      ));
     }
 
     return {
-      ok: false,
-      error: lastError?.message || 'No translation provider succeeded.',
-      latencyMs: now() - startedAt,
-      targetLanguage
+      ok: true,
+      ...snapshot,
+      effectiveProvider: this.effectiveProvider
     };
+  }
+
+  async translateOnce({ text, sourceLanguage = 'en-US', targetLanguage = 'ja-JP', primaryModel, fallbackModel }) {
+    const startedAt = now();
+    const previous = {
+      primaryModel: config.openai.model,
+      fallbackModel: config.openai.fallbackModel
+    };
+    const usesTemporaryModel = Boolean(primaryModel || fallbackModel !== undefined);
+    let activeProviders = this.providers;
+
+    if (usesTemporaryModel) {
+      updateOpenAIModelConfig({ primaryModel, fallbackModel });
+      activeProviders = makeProviders();
+    }
+
+    try {
+      const providers = [activeProviders.primary, activeProviders.fallback].filter(Boolean);
+      let lastError = null;
+
+      for (const provider of providers) {
+        let accumulated = '';
+        try {
+          for await (const delta of provider.translate({
+            sourceText: text,
+            sourceLanguage,
+            targetLanguage
+          })) {
+            accumulated += delta;
+          }
+          return {
+            ok: true,
+            text: accumulated || text,
+            provider: provider.name,
+            latencyMs: now() - startedAt,
+            targetLanguage,
+            model: provider.model || provider.name
+          };
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      return {
+        ok: false,
+        error: lastError?.message || 'No translation provider succeeded.',
+        latencyMs: now() - startedAt,
+        targetLanguage
+      };
+    } finally {
+      if (usesTemporaryModel) updateOpenAIModelConfig(previous);
+    }
   }
 
   captionMessage({ unit, language, text, isFinal, provider, startedAt }) {

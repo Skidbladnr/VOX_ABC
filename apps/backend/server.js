@@ -58,12 +58,27 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, providerRuntimeStatus());
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/model-config') {
+      return json(res, 200, { ok: true, ...engine.getModelConfig(), effectiveProvider: providerRuntimeStatus().effectiveProvider });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/model-config') {
+      const body = await readJsonBody(req);
+      const result = engine.setModelConfig({
+        primaryModel: body.primaryModel || body.model,
+        fallbackModel: body.fallbackModel ?? body.fallback
+      });
+      return json(res, 202, result);
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/test-translation') {
       const body = await readJsonBody(req);
       const result = await engine.translateOnce({
         text: String(body.text || ''),
         sourceLanguage: body.sourceLanguage || 'en-US',
-        targetLanguage: body.targetLanguage || 'ja-JP'
+        targetLanguage: body.targetLanguage || 'ja-JP',
+        primaryModel: body.primaryModel || body.model || undefined,
+        fallbackModel: body.fallbackModel ?? body.fallback
       });
       return json(res, result.ok ? 200 : 502, result);
     }

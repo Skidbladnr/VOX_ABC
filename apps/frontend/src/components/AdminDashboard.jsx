@@ -1,29 +1,43 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { LANGUAGES } from '../../../../shared/contracts/languages.js';
 import { getJson, postJson } from '../api.js';
 import { VoiceInputPanel } from './VoiceInputPanel.jsx';
 
 const SAMPLE = 'Please watch the lauter flow rate and wort clarity before increasing the sparge temperature.';
 
+function unique(items) {
+  return Array.from(new Set(items.filter(Boolean)));
+}
+
 export function AdminDashboard() {
   const [health, setHealth] = useState(null);
   const [provider, setProvider] = useState(null);
+  const [modelConfig, setModelConfig] = useState(null);
   const [manualText, setManualText] = useState(SAMPLE);
   const [sourceLanguage, setSourceLanguage] = useState('en-US');
   const [targetLanguage, setTargetLanguage] = useState('ja-JP');
+  const [primaryModel, setPrimaryModel] = useState('');
+  const [fallbackModel, setFallbackModel] = useState('');
+  const [customPrimaryModel, setCustomPrimaryModel] = useState('');
+  const [customFallbackModel, setCustomFallbackModel] = useState('');
   const [testResult, setTestResult] = useState(null);
   const [lastAsrResult, setLastAsrResult] = useState(null);
+  const [modelUpdateResult, setModelUpdateResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   async function refresh() {
     try {
-      const [nextHealth, nextProvider] = await Promise.all([
+      const [nextHealth, nextProvider, nextModelConfig] = await Promise.all([
         getJson('/api/health'),
-        getJson('/api/provider-status')
+        getJson('/api/provider-status'),
+        getJson('/api/model-config')
       ]);
       setHealth(nextHealth);
       setProvider(nextProvider);
+      setModelConfig(nextModelConfig);
+      setPrimaryModel((current) => current || nextModelConfig.primaryModel || nextProvider.openai?.model || '');
+      setFallbackModel((current) => current || nextModelConfig.fallbackModel || nextProvider.openai?.fallbackModel || '');
       setError('');
     } catch (err) {
       setError(err.message);
@@ -35,6 +49,20 @@ export function AdminDashboard() {
     const timer = setInterval(refresh, 1500);
     return () => clearInterval(timer);
   }, []);
+
+  const modelOptions = useMemo(() => unique([
+    ...(modelConfig?.modelOptions || []),
+    ...(provider?.openai?.modelOptions || []),
+    primaryModel,
+    fallbackModel,
+    'gpt-5.4-mini',
+    'gpt-5-mini',
+    'gpt-4.1-mini',
+    'gpt-5.2'
+  ]), [modelConfig, provider, primaryModel, fallbackModel]);
+
+  const selectedPrimaryModel = primaryModel === '__custom__' ? customPrimaryModel.trim() : primaryModel;
+  const selectedFallbackModel = fallbackModel === '__custom__' ? customFallbackModel.trim() : fallbackModel;
 
   async function sendManualCaption() {
     setBusy(true);
@@ -69,7 +97,13 @@ export function AdminDashboard() {
     setBusy(true);
     setTestResult(null);
     try {
-      const result = await postJson('/api/test-translation', { text: manualText, sourceLanguage, targetLanguage });
+      const result = await postJson('/api/test-translation', {
+        text: manualText,
+        sourceLanguage,
+        targetLanguage,
+        primaryModel: selectedPrimaryModel,
+        fallbackModel: selectedFallbackModel
+      });
       setTestResult(result);
       await refresh();
     } catch (err) {
@@ -77,6 +111,37 @@ export function AdminDashboard() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function applyModelConfig() {
+    setBusy(true);
+    setModelUpdateResult(null);
+    try {
+      const result = await postJson('/api/model-config', {
+        primaryModel: selectedPrimaryModel,
+        fallbackModel: selectedFallbackModel
+      });
+      setModelUpdateResult(result);
+      if (result.primaryModel) setPrimaryModel(result.primaryModel);
+      if (result.fallbackModel !== undefined) setFallbackModel(result.fallbackModel || '');
+      setCustomPrimaryModel('');
+      setCustomFallbackModel('');
+      await refresh();
+    } catch (err) {
+      setModelUpdateResult({ ok: false, error: err.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetModelForm() {
+    const next = await getJson('/api/model-config');
+    setModelConfig(next);
+    setPrimaryModel(next.primaryModel || '');
+    setFallbackModel(next.fallbackModel || '');
+    setCustomPrimaryModel('');
+    setCustomFallbackModel('');
+    setModelUpdateResult(null);
   }
 
   async function nextSlide() {
@@ -90,12 +155,82 @@ export function AdminDashboard() {
         <div>
           <p className="eyebrow">Internal dashboard</p>
           <h1>Vox live control</h1>
-          <p className="muted">Test real GPT translation, inject finalized ASR phrases, run browser mic input, and watch per-language latency/error health.</p>
+          <p className="muted">Test real GPT translation, switch models, inject finalized ASR phrases, run browser mic input, and watch per-language latency/error health.</p>
         </div>
         <ProviderBadge provider={provider} />
       </section>
 
       {error ? <p className="error-text">{error}</p> : null}
+
+      <section className="admin-card model-card">
+        <div className="model-card__header">
+          <div>
+            <p className="eyebrow">Translation model</p>
+            <h2>Live OpenAI model switcher</h2>
+            <p className="muted">Applies to new live translation segments immediately. Existing in-flight segments continue with the model they already started on.</p>
+          </div>
+          <div className="model-current">
+            <span>Current</span>
+            <strong>{modelConfig?.primaryModel || provider?.openai?.model || '—'}</strong>
+            <small>Fallback: {modelConfig?.fallbackModel || provider?.openai?.fallbackModel || 'mock / none'}</small>
+          </div>
+        </div>
+
+        <div className="admin-form-row admin-form-row--models">
+          <label>
+            Primary model
+            <select value={primaryModel} onChange={(event) => setPrimaryModel(event.target.value)}>
+              {modelOptions.map((model) => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+              <option value="__custom__">Custom model…</option>
+            </select>
+          </label>
+          {primaryModel === '__custom__' ? (
+            <label>
+              Custom primary
+              <input
+                value={customPrimaryModel}
+                onChange={(event) => setCustomPrimaryModel(event.target.value)}
+                placeholder="e.g. gpt-5.4-mini"
+              />
+            </label>
+          ) : null}
+          <label>
+            Fallback model
+            <select value={fallbackModel} onChange={(event) => setFallbackModel(event.target.value)}>
+              <option value="">No OpenAI fallback / use provider default</option>
+              {modelOptions.map((model) => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+              <option value="__custom__">Custom model…</option>
+            </select>
+          </label>
+          {fallbackModel === '__custom__' ? (
+            <label>
+              Custom fallback
+              <input
+                value={customFallbackModel}
+                onChange={(event) => setCustomFallbackModel(event.target.value)}
+                placeholder="e.g. gpt-4.1-mini"
+              />
+            </label>
+          ) : null}
+        </div>
+
+        <div className="admin-actions">
+          <button onClick={applyModelConfig} disabled={busy || !selectedPrimaryModel}>Apply to live stream</button>
+          <button onClick={runSingleTargetTest} disabled={busy || !selectedPrimaryModel}>Test selected model only</button>
+          <button className="ghost-button" onClick={resetModelForm} disabled={busy}>Reset form</button>
+        </div>
+
+        {modelUpdateResult ? (
+          <div className={`test-result ${modelUpdateResult.ok === false ? 'test-result--error' : ''}`}>
+            <span>{modelUpdateResult.ok === false ? 'Model update failed' : 'Live model updated'}</span>
+            <p>{modelUpdateResult.ok === false ? modelUpdateResult.error : `${modelUpdateResult.primaryModel} · fallback ${modelUpdateResult.fallbackModel || 'none'}`}</p>
+          </div>
+        ) : null}
+      </section>
 
       <VoiceInputPanel sourceLanguage={sourceLanguage} onSourceLanguageChange={setSourceLanguage} onRefresh={refresh} />
 
@@ -120,7 +255,7 @@ export function AdminDashboard() {
           </label>
         </div>
         <div className="admin-actions">
-          <button onClick={runSingleTargetTest} disabled={busy}>Test one target only</button>
+          <button onClick={runSingleTargetTest} disabled={busy || !selectedPrimaryModel}>Test one target only</button>
           <button onClick={sendManualCaption} disabled={busy}>Send to active live streams</button>
           <button onClick={flushAsrBuffer} disabled={busy}>Flush ASR buffer</button>
           <button onClick={nextSlide}>Advance slide</button>
