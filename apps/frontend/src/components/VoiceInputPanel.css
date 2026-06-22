@@ -1,0 +1,120 @@
+.voice-card {
+  display: grid;
+  gap: 14px;
+}
+.voice-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+.voice-header h2 {
+  margin: 0;
+}
+.mic-indicator {
+  border: 1px solid var(--border);
+  background: #1A1511;
+  color: var(--text-secondary);
+  border-radius: 999px;
+  min-height: 38px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.mic-indicator span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+.mic-indicator--live {
+  color: var(--caption);
+}
+.mic-indicator--live span {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(201,122,61,0.18), 0 0 18px rgba(201,122,61,0.45);
+}
+.voice-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) 1.15fr;
+  gap: 10px;
+  align-items: end;
+}
+.voice-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+}
+.voice-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.voice-buttons button {
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  border-radius: 12px;
+  min-height: 40px;
+  padding: 0 12px;
+}
+.voice-buttons button:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+.interim-box {
+  border: 1px dashed rgba(201,122,61,0.32);
+  background: rgba(201,122,61,0.06);
+  border-radius: 16px;
+  padding: 12px;
+}
+.interim-box span {
+  color: var(--accent);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.interim-box p {
+  margin: 7px 0 0;
+  color: var(--caption);
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
+}
+.voice-log {
+  display: grid;
+  gap: 8px;
+}
+.voice-log-row {
+  border: 1px solid var(--border);
+  background: #1A1511;
+  border-radius: 14px;
+  padding: 10px;
+}
+.voice-log-row strong {
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+}
+.voice-log-row span {
+  color: var(--text-secondary);
+  margin-left: 8px;
+  font-size: 0.82rem;
+}
+.voice-log-row p {
+  margin: 6px 0 0;
+  color: var(--text);
+}
+.voice-log-row--skip strong,
+.voice-log-row--held strong {
+  color: var(--text-tertiary);
+}
+@media (max-width: 760px) {
+  .voice-header,
+  .voice-controls {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+}
