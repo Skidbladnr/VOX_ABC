@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { findLanguage } from '../../../shared/contracts/languages.js';
 import { BREWING_GLOSSARY, formatGlossaryForPrompt } from '../../../shared/contracts/glossary.js';
+import { formatBrewingContextForPrompt } from '../rag/brewingRag.js';
 
 function extractDelta(event) {
   if (!event || typeof event !== 'object') return '';
@@ -10,7 +11,9 @@ function extractDelta(event) {
   return '';
 }
 
-function buildInstructions({ sourceLanguage, target, glossary }) {
+function buildInstructions({ sourceLanguage, target, glossary, ragMatches }) {
+  const retrievedContext = formatBrewingContextForPrompt(ragMatches || [], target.code);
+
   return [
     'You are a live conference caption translator for Asia Brew Conference.',
     `Translate from ${sourceLanguage} into ${target.english} (${target.code}).`,
@@ -18,8 +21,10 @@ function buildInstructions({ sourceLanguage, target, glossary }) {
     'Keep the register professional, concise, and easy to read on a phone screen.',
     'Prefer short caption phrasing over literary style. Preserve numbers, units, brewery names, beer styles, and acronyms.',
     'Prioritize brewing terminology accuracy over decorative fluency embellishment.',
-    `Glossary:\n${formatGlossaryForPrompt(glossary)}`
-  ].join('\n');
+    'When a brewing term has a specialized meaning, translate that specialized meaning instead of the ordinary dictionary meaning.',
+    `Static base glossary:\n${formatGlossaryForPrompt(glossary)}`,
+    retrievedContext || 'No extra retrieved brewery terminology context matched this phrase.'
+  ].join('\n\n');
 }
 
 export class OpenAITranslationProvider {
@@ -30,7 +35,7 @@ export class OpenAITranslationProvider {
     this.client = new OpenAI({ apiKey });
   }
 
-  async *translate({ sourceText, sourceLanguage = 'en-US', targetLanguage, glossary = BREWING_GLOSSARY }) {
+  async *translate({ sourceText, sourceLanguage = 'en-US', targetLanguage, glossary = BREWING_GLOSSARY, ragMatches = [] }) {
     const target = findLanguage(targetLanguage);
     if (target.code === sourceLanguage) {
       yield sourceText;
@@ -44,7 +49,7 @@ export class OpenAITranslationProvider {
       const stream = await this.client.responses.create(
         {
           model: this.model,
-          instructions: buildInstructions({ sourceLanguage, target, glossary }),
+          instructions: buildInstructions({ sourceLanguage, target, glossary, ragMatches }),
           input: sourceText,
           stream: true,
           max_output_tokens: 500

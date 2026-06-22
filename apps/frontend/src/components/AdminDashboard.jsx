@@ -13,6 +13,8 @@ export function AdminDashboard() {
   const [health, setHealth] = useState(null);
   const [provider, setProvider] = useState(null);
   const [modelConfig, setModelConfig] = useState(null);
+  const [ragStatus, setRagStatus] = useState(null);
+  const [ragSearchResult, setRagSearchResult] = useState(null);
   const [manualText, setManualText] = useState(SAMPLE);
   const [sourceLanguage, setSourceLanguage] = useState('en-US');
   const [targetLanguage, setTargetLanguage] = useState('ja-JP');
@@ -28,14 +30,16 @@ export function AdminDashboard() {
 
   async function refresh() {
     try {
-      const [nextHealth, nextProvider, nextModelConfig] = await Promise.all([
+      const [nextHealth, nextProvider, nextModelConfig, nextRagStatus] = await Promise.all([
         getJson('/api/health'),
         getJson('/api/provider-status'),
-        getJson('/api/model-config')
+        getJson('/api/model-config'),
+        getJson('/api/rag/status')
       ]);
       setHealth(nextHealth);
       setProvider(nextProvider);
       setModelConfig(nextModelConfig);
+      setRagStatus(nextRagStatus);
       setPrimaryModel((current) => current || nextModelConfig.primaryModel || nextProvider.openai?.model || '');
       setFallbackModel((current) => current || nextModelConfig.fallbackModel || nextProvider.openai?.fallbackModel || '');
       setError('');
@@ -88,6 +92,20 @@ export function AdminDashboard() {
       const result = await postJson('/api/asr/flush', { sourceLanguage });
       setLastAsrResult(result);
       await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runRagSearch() {
+    setBusy(true);
+    setRagSearchResult(null);
+    try {
+      const result = await postJson('/api/rag/search', { text: manualText });
+      setRagSearchResult(result);
+      await refresh();
+    } catch (err) {
+      setRagSearchResult({ ok: false, error: err.message, matches: [] });
     } finally {
       setBusy(false);
     }
@@ -155,7 +173,7 @@ export function AdminDashboard() {
         <div>
           <p className="eyebrow">Internal dashboard</p>
           <h1>Vox live control</h1>
-          <p className="muted">Test real GPT translation, switch models, inject finalized ASR phrases, run browser mic input, and watch per-language latency/error health.</p>
+          <p className="muted">Test real GPT translation, switch models, inspect brewery-term retrieval, inject finalized ASR phrases, run browser mic input, and watch per-language latency/error health.</p>
         </div>
         <ProviderBadge provider={provider} />
       </section>
@@ -232,6 +250,44 @@ export function AdminDashboard() {
         ) : null}
       </section>
 
+      <section className="admin-card rag-card">
+        <div className="model-card__header">
+          <div>
+            <p className="eyebrow">Brewery terminology retrieval</p>
+            <h2>Rudimentary local RAG</h2>
+            <p className="muted">Matches technical beer/brewery terms in the current phrase and injects only the relevant entries into the GPT prompt. This is local and in-memory, so it adds almost no live latency.</p>
+          </div>
+          <div className={`rag-badge ${ragStatus?.enabled ? 'rag-badge--on' : ''}`}>
+            <span>{ragStatus?.enabled ? 'Enabled' : 'Disabled'}</span>
+            <small>{ragStatus?.knowledgeStats?.entries ?? 0} entries · max {ragStatus?.maxEntries ?? '—'} per chunk</small>
+          </div>
+        </div>
+
+        <div className="admin-actions">
+          <button onClick={runRagSearch} disabled={busy || !manualText.trim()}>Preview retrieval for manual text</button>
+        </div>
+
+        {ragSearchResult ? (
+          <div className={`rag-results ${ragSearchResult.ok === false ? 'test-result--error' : ''}`}>
+            <strong>{ragSearchResult.ok === false ? 'Retrieval failed' : `${ragSearchResult.matches?.length || 0} matched entr${ragSearchResult.matches?.length === 1 ? 'y' : 'ies'}`}</strong>
+            {ragSearchResult.error ? <p>{ragSearchResult.error}</p> : null}
+            <div className="rag-chip-row">
+              {(ragSearchResult.matches || []).map((match) => (
+                <span className="rag-chip" key={match.id} title={match.matched?.join(', ') || ''}>
+                  {match.term} <small>{match.score}</small>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {ragStatus?.lastMatches?.length ? (
+          <p className="muted">Last live retrieval: {ragStatus.lastMatches.map((match) => match.term).join(', ')}</p>
+        ) : (
+          <p className="muted">No live retrieval matches yet. Try phrases like “wort clarity”, “hop creep”, “diacetyl rest”, or “CIP caustic wash”.</p>
+        )}
+      </section>
+
       <VoiceInputPanel sourceLanguage={sourceLanguage} onSourceLanguageChange={setSourceLanguage} onRefresh={refresh} />
 
       <section className="admin-card">
@@ -256,6 +312,7 @@ export function AdminDashboard() {
         </div>
         <div className="admin-actions">
           <button onClick={runSingleTargetTest} disabled={busy || !selectedPrimaryModel}>Test one target only</button>
+          <button className="ghost-button" onClick={runRagSearch} disabled={busy || !manualText.trim()}>Preview RAG</button>
           <button onClick={sendManualCaption} disabled={busy}>Send to active live streams</button>
           <button onClick={flushAsrBuffer} disabled={busy}>Flush ASR buffer</button>
           <button onClick={nextSlide}>Advance slide</button>
@@ -270,6 +327,13 @@ export function AdminDashboard() {
           <div className={`test-result ${testResult.ok ? '' : 'test-result--error'}`}>
             <span>{testResult.ok ? `${testResult.provider} · ${testResult.latencyMs}ms` : 'Translation test failed'}</span>
             <p>{testResult.text || testResult.error}</p>
+            {testResult.ragMatches?.length ? (
+              <div className="rag-chip-row rag-chip-row--compact">
+                {testResult.ragMatches.map((match) => (
+                  <span className="rag-chip" key={match.id}>{match.term}</span>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -281,6 +345,8 @@ export function AdminDashboard() {
           <Metric label="Finalized" value={health?.asr?.finalizedEvents ?? 0} />
           <Metric label="Translation units" value={health?.asr?.emittedUnits ?? 0} />
           <Metric label="Buffered partial" value={health?.asr?.segmenter?.partialText ? 'yes' : 'no'} />
+          <Metric label="RAG chunks" value={health?.rag?.retrievedChunks ?? 0} />
+          <Metric label="RAG matches" value={health?.rag?.totalMatches ?? 0} />
         </div>
         <p className="muted">Last input: {health?.asr?.lastTextPreview || 'none yet'}</p>
       </section>
@@ -299,6 +365,7 @@ export function AdminDashboard() {
               <th>Latency</th>
               <th>Segments</th>
               <th>Errors</th>
+              <th>RAG hits</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -310,6 +377,7 @@ export function AdminDashboard() {
                 <td className={latencyClass(metric.lastLatencyMs)}>{metric.lastLatencyMs == null ? '—' : `${metric.lastLatencyMs}ms`}</td>
                 <td>{metric.translatedSegments}</td>
                 <td>{metric.errors}</td>
+                <td>{metric.ragHits ?? 0}</td>
                 <td><span className={`metric-status metric-status--${metric.status}`}>{metric.status}</span></td>
               </tr>
             ))}

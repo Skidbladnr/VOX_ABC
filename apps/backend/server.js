@@ -58,6 +58,19 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, providerRuntimeStatus());
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/rag/status') {
+      return json(res, 200, { ok: true, ...engine.ragStatus() });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/rag/search') {
+      const body = await readJsonBody(req);
+      return json(res, 200, {
+        ok: true,
+        text: String(body.text || ''),
+        matches: engine.searchRag(String(body.text || ''))
+      });
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/model-config') {
       return json(res, 200, { ok: true, ...engine.getModelConfig(), effectiveProvider: providerRuntimeStatus().effectiveProvider });
     }

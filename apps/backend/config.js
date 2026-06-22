@@ -83,6 +83,12 @@ export const config = {
   activeLanguageCodes: csvFromEnv(process.env.ACTIVE_LANGUAGES),
   translationProvider: process.env.TRANSLATION_PROVIDER || 'mock',
   translationTimeoutMs: intFromEnv(process.env.TRANSLATION_TIMEOUT_MS, 5000),
+  rag: {
+    enabled: boolFromEnv(process.env.RAG_ENABLED, true),
+    maxEntries: intFromEnv(process.env.RAG_MAX_ENTRIES, 6),
+    minScore: intFromEnv(process.env.RAG_MIN_SCORE, 2),
+    debug: boolFromEnv(process.env.RAG_DEBUG, false)
+  },
   openai: {
     apiKey: process.env.OPENAI_API_KEY || '',
     model: process.env.OPENAI_MODEL || configuredModelOptions[0] || 'gpt-5.4-mini',
@@ -146,6 +152,12 @@ export function providerRuntimeStatus() {
     effectiveProvider: config.translationProvider === 'openai' && apiKeyPresent ? 'openai' : 'mock',
     demoAsr: config.demoAsr,
     timeoutMs: config.translationTimeoutMs,
+    rag: {
+      enabled: config.rag.enabled,
+      maxEntries: config.rag.maxEntries,
+      minScore: config.rag.minScore,
+      debug: config.rag.debug
+    },
     activeLanguages: configuredLanguages().map((language) => language.code),
     openai: {
       apiKeyPresent,

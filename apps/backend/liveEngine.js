@@ -4,6 +4,7 @@ import { configuredLanguages, config, updateOpenAIModelConfig, modelConfigSnapsh
 import { PhraseSegmenter } from './segmentation.js';
 import { getCurrentSlide } from './slides.js';
 import { makeProviders } from './providers/index.js';
+import { retrieveBrewingContext, ragDebugPayload, brewingKnowledgeStats } from './rag/brewingRag.js';
 
 const DEMO_LINES = [
   'Good morning and welcome to Asia Brew Conference.',
@@ -24,7 +25,8 @@ function createMetric(language) {
     translatedSegments: 0,
     errors: 0,
     lastLatencyMs: null,
-    status: 'idle'
+    status: 'idle',
+    ragHits: 0
   };
 }
 
@@ -54,6 +56,14 @@ export class LiveTranslationEngine {
       lastSource: null,
       lastSourceLanguage: 'en-US',
       lastTextPreview: ''
+    };
+    this.rag = {
+      enabled: config.rag.enabled,
+      retrievedChunks: 0,
+      totalMatches: 0,
+      lastTextPreview: '',
+      lastMatches: [],
+      knowledgeStats: brewingKnowledgeStats()
     };
   }
 
@@ -144,8 +154,13 @@ export class LiveTranslationEngine {
   }
 
   fanOut(unit) {
+    const enrichedUnit = {
+      ...unit,
+      ragMatches: this.retrieveRag(unit.sourceText)
+    };
+
     for (const language of this.languages) {
-      this.translateForLanguage(unit, language.code).catch((error) => {
+      this.translateForLanguage(enrichedUnit, language.code).catch((error) => {
         console.error(`[vox] language pipeline failed for ${language.code}`, error);
       });
     }
@@ -154,6 +169,7 @@ export class LiveTranslationEngine {
   async translateForLanguage(unit, language) {
     const metric = this.ensureMetric(language);
     metric.status = 'active';
+    if (unit.ragMatches?.length) metric.ragHits += unit.ragMatches.length;
     const startedAt = now();
     let accumulated = '';
 
@@ -161,7 +177,8 @@ export class LiveTranslationEngine {
       for await (const delta of provider.translate({
         sourceText: unit.sourceText,
         sourceLanguage: unit.sourceLanguage,
-        targetLanguage: language
+        targetLanguage: language,
+        ragMatches: unit.ragMatches || []
       })) {
         accumulated += delta;
         const message = this.captionMessage({ unit, language, text: accumulated, isFinal: false, provider: provider.name, startedAt });
@@ -235,6 +252,7 @@ export class LiveTranslationEngine {
     };
     const usesTemporaryModel = Boolean(primaryModel || fallbackModel !== undefined);
     let activeProviders = this.providers;
+    const ragMatches = this.retrieveRag(text);
 
     if (usesTemporaryModel) {
       updateOpenAIModelConfig({ primaryModel, fallbackModel });
@@ -251,7 +269,8 @@ export class LiveTranslationEngine {
           for await (const delta of provider.translate({
             sourceText: text,
             sourceLanguage,
-            targetLanguage
+            targetLanguage,
+            ragMatches
           })) {
             accumulated += delta;
           }
@@ -261,7 +280,8 @@ export class LiveTranslationEngine {
             provider: provider.name,
             latencyMs: now() - startedAt,
             targetLanguage,
-            model: provider.model || provider.name
+            model: provider.model || provider.name,
+            ragMatches: ragDebugPayload(ragMatches)
           };
         } catch (error) {
           lastError = error;
@@ -272,11 +292,47 @@ export class LiveTranslationEngine {
         ok: false,
         error: lastError?.message || 'No translation provider succeeded.',
         latencyMs: now() - startedAt,
-        targetLanguage
+        targetLanguage,
+        ragMatches: ragDebugPayload(ragMatches)
       };
     } finally {
       if (usesTemporaryModel) updateOpenAIModelConfig(previous);
     }
+  }
+
+  retrieveRag(sourceText) {
+    if (!config.rag.enabled) return [];
+
+    const matches = retrieveBrewingContext(sourceText, {
+      maxEntries: config.rag.maxEntries,
+      minScore: config.rag.minScore
+    });
+
+    if (matches.length) {
+      this.rag.retrievedChunks += 1;
+      this.rag.totalMatches += matches.length;
+      this.rag.lastTextPreview = String(sourceText || '').slice(0, 160);
+      this.rag.lastMatches = ragDebugPayload(matches);
+    }
+
+    return matches;
+  }
+
+  searchRag(text) {
+    return ragDebugPayload(retrieveBrewingContext(text, {
+      maxEntries: config.rag.maxEntries,
+      minScore: config.rag.minScore
+    }));
+  }
+
+  ragStatus() {
+    return {
+      enabled: config.rag.enabled,
+      maxEntries: config.rag.maxEntries,
+      minScore: config.rag.minScore,
+      debug: config.rag.debug,
+      ...this.rag
+    };
   }
 
   captionMessage({ unit, language, text, isFinal, provider, startedAt }) {
@@ -369,6 +425,7 @@ export class LiveTranslationEngine {
         ...this.asr,
         segmenter: this.segmenter.snapshot()
       },
+      rag: this.ragStatus(),
       languages: Array.from(this.metrics.values())
     };
   }
